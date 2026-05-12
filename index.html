@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Absensi OSIS</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0c4e6e, #1e7898);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .card {
+            background: white;
+            border-radius: 24px;
+            padding: 20px 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+        }
+        h2, h3 { color: #0c4e6e; margin-bottom: 15px; }
+        .form-group { margin-bottom: 15px; }
+        label { font-weight: 600; display: block; margin-bottom: 5px; }
+        input, select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 16px;
+            font-size: 16px;
+        }
+        button {
+            background: #0c4e6e;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 40px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-right: 10px;
+            margin-top: 10px;
+        }
+        button:hover { background: #1e7898; }
+        .logout-btn { background: #e2e8f0; color: #1e293b; }
+        .table-wrapper { overflow-x: auto; margin-top: 15px; }
+        table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; }
+        th { background: #e2e8f0; }
+        .status-hadir { color: green; font-weight: bold; }
+        .status-alpha { color: red; }
+        .status-izin { color: orange; }
+        .status-sakit { color: blue; }
+        .belum-absen { color: gray; font-style: italic; }
+        .btn-group { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 15px; }
+        @media (max-width: 768px) {
+            .card { padding: 15px; }
+            th, td { font-size: 12px; }
+        }
+    </style>
+</head>
+<body>
+<div class="container" id="app">
+    <!-- Halaman Login -->
+    <div id="login-view" class="card">
+        <h2>📋 Login Absensi OSIS</h2>
+        <div class="form-group">
+            <label>Username</label>
+            <input type="text" id="username" placeholder="username">
+        </div>
+        <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="password" placeholder="password">
+        </div>
+        <button id="loginBtn">Login</button>
+        <div id="loginMessage"></div>
+    </div>
+
+    <!-- Dashboard (untuk semua user) -->
+    <div id="dashboard-view" style="display: none;">
+        <div class="card">
+            <div id="userInfo"></div>
+            <div class="form-group">
+                <label>Status Kehadiran</label>
+                <select id="statusAbsen">
+                    <option value="Hadir">Hadir</option>
+                    <option value="Izin">Izin</option>
+                    <option value="Sakit">Sakit</option>
+                    <option value="Alpha">Alpha</option>
+                </select>
+            </div>
+            <button id="absenBtn">📝 Kirim Absensi</button>
+            <button id="logoutBtn" class="logout-btn">🚪 Logout</button>
+            <div id="absenMessage"></div>
+        </div>
+
+        <!-- Panel Admin (hanya muncul jika jabatan Admin) -->
+        <div id="adminPanel" style="display: none;">
+            <div class="card">
+                <h3>📊 Panel Admin - Rekap Kehadiran Hari Ini</h3>
+                <div class="btn-group">
+                    <button id="refreshAdminBtn">🔄 Refresh Data</button>
+                    <button id="printPDFBtn">📄 Cetak PDF</button>
+                    <button id="downloadTXTBtn">📁 Download TXT</button>
+                </div>
+                <div class="table-wrapper">
+                    <table id="adminTable">
+                        <thead>
+                            <tr><th>No</th><th>Nama Lengkap</th><th>Jabatan</th><th>Status Hari Ini</th><th>Waktu Absen</th></tr>
+                        </thead>
+                        <tbody id="adminTableBody">
+                            <tr><td colspan="5">Loading data...<\/td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const API_URL = 'https://script.google.com/macros/s/AKfycbylr3JEJKyzZjnggZfL8AMnWl-fn5Wfp8LnygrZIiWElim_gE0JOkU5u8wn8hgbWc1v/exec';
+    
+    let currentUser = null;
+
+    const loginView = document.getElementById('login-view');
+    const dashboardView = document.getElementById('dashboard-view');
+    const adminPanel = document.getElementById('adminPanel');
+    const adminTableBody = document.getElementById('adminTableBody');
+    const userInfoDiv = document.getElementById('userInfo');
+    const loginMessageDiv = document.getElementById('loginMessage');
+    const absenMessageDiv = document.getElementById('absenMessage');
+
+    function showMessage(el, msg, type) {
+        const bg = type === 'error' ? '#fee2e2' : '#dcfce7';
+        const color = type === 'error' ? '#991b1b' : '#166534';
+        el.innerHTML = `<div style="background:${bg}; color:${color}; padding:10px; border-radius:40px; margin-top:10px;">${msg}</div>`;
+        setTimeout(() => { if (el.innerHTML.includes(msg)) el.innerHTML = ''; }, 3000);
+    }
+
+    async function callAPI(action, payload = {}) {
+        const body = { action, ...payload };
+        const response = await fetch(API_URL, {
+            method: 'POST',
+            mode: 'cors',
+            body: JSON.stringify(body)
+        });
+        return response.json();
+    }
+
+    async function login(username, password) {
+        const result = await callAPI('login', { username, password });
+        if (result.success) {
+            currentUser = {
+                username: result.username,
+                namaLengkap: result.namaLengkap,
+                jabatan: result.jabatan
+            };
+            loginView.style.display = 'none';
+            dashboardView.style.display = 'block';
+            userInfoDiv.innerHTML = `<strong> Halo, ${currentUser.namaLengkap}</strong><br>Jabatan: ${currentUser.jabatan}`;
+            
+            if (currentUser.jabatan === 'Admin') {
+                adminPanel.style.display = 'block';
+                loadAdminData();
+            } else {
+                adminPanel.style.display = 'none';
+            }
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
+        } else {
+            showMessage(loginMessageDiv, result.message, 'error');
+        }
+    }
+
+    async function absen(status) {
+        const result = await callAPI('absen', {
+            username: currentUser.username,
+            namaLengkap: currentUser.namaLengkap,
+            jabatan: currentUser.jabatan,
+            status: status
+        });
+        if (result.success) {
+            showMessage(absenMessageDiv, `✅ ${result.message}`, 'success');
+            if (currentUser.jabatan === 'Admin') loadAdminData();
+        } else {
+            showMessage(absenMessageDiv, result.message, 'error');
+        }
+    }
+
+    async function loadAdminData() {
+        const usersRes = await callAPI('getAllUsers');
+        if (!usersRes.success) return;
+        const allUsers = usersRes.users;
+        const rekapRes = await callAPI('getRekapByDate', { tanggal: new Date().toISOString() });
+        const absensiHariIni = rekapRes.success ? rekapRes.absensi : [];
+        
+        const absenMap = {};
+        absensiHariIni.forEach(a => {
+            absenMap[a.username] = { status: a.status, timestamp: new Date(a.timestamp).toLocaleTimeString('id-ID') };
+        });
+        
+        let html = '';
+        allUsers.forEach((user, idx) => {
+            const absenInfo = absenMap[user.username];
+            const status = absenInfo ? absenInfo.status : 'Belum absen';
+            const waktu = absenInfo ? absenInfo.timestamp : '-';
+            let statusClass = '';
+            if (status === 'Hadir') statusClass = 'status-hadir';
+            else if (status === 'Alpha') statusClass = 'status-alpha';
+            else if (status === 'Izin') statusClass = 'status-izin';
+            else if (status === 'Sakit') statusClass = 'status-sakit';
+            else statusClass = 'belum-absen';
+            html += `<tr>
+                        <td>${idx+1}</td>
+                        <td>${user.namaLengkap}</td>
+                        <td>${user.jabatan}</td>
+                        <td class="${statusClass}">${status}</td>
+                        <td>${waktu}</td>
+                     </tr>`;
+        });
+        adminTableBody.innerHTML = html;
+    }
+
+    function printAsPDF() {
+        const printContent = document.getElementById('adminTable').cloneNode(true);
+        const title = `Laporan Absensi OSIS - ${new Date().toLocaleDateString('id-ID')}`;
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(`
+            <html><head><title>Laporan Absensi</title>
+            <style>
+                body { font-family: Arial, sans-serif; padding: 20px; }
+                table { border-collapse: collapse; width: 100%; }
+                th, td { border: 1px solid #000; padding: 8px; text-align: left; }
+                th { background: #f2f2f2; }
+                h3 { text-align: center; }
+            </style>
+            </head><body>
+            <h3>${title}</h3>
+            ${printContent.outerHTML}
+            </body></html>
+        `);
+        printWindow.document.close();
+        printWindow.print();
+    }
+
+    function downloadAsTXT() {
+        const rows = Array.from(adminTableBody.querySelectorAll('tr'));
+        let txt = `LAPORAN ABSENSI OSIS - ${new Date().toLocaleDateString('id-ID')}\n`;
+        txt += `================================================================\n`;
+        txt += `No\tNama Lengkap\tJabatan\tStatus Hari Ini\tWaktu Absen\n`;
+        rows.forEach(row => {
+            const cols = row.querySelectorAll('td');
+            if (cols.length === 5) {
+                txt += `${cols[0].innerText}\t${cols[1].innerText}\t${cols[2].innerText}\t${cols[3].innerText}\t${cols[4].innerText}\n`;
+            }
+        });
+        const blob = new Blob([txt], { type: 'text/plain' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = `rekap_absensi_${new Date().toISOString().slice(0,10)}.txt`;
+        link.click();
+        URL.revokeObjectURL(link.href);
+    }
+
+    document.getElementById('loginBtn').addEventListener('click', () => {
+        const username = document.getElementById('username').value.trim();
+        const password = document.getElementById('password').value;
+        if (!username || !password) {
+            showMessage(loginMessageDiv, 'Isi username dan password', 'error');
+            return;
+        }
+        login(username, password);
+    });
+    document.getElementById('absenBtn').addEventListener('click', () => {
+        const status = document.getElementById('statusAbsen').value;
+        absen(status);
+    });
+    document.getElementById('logoutBtn').addEventListener('click', () => {
+        currentUser = null;
+        loginView.style.display = 'block';
+        dashboardView.style.display = 'none';
+        adminPanel.style.display = 'none';
+        absenMessageDiv.innerHTML = '';
+    });
+    document.getElementById('refreshAdminBtn')?.addEventListener('click', loadAdminData);
+    document.getElementById('printPDFBtn')?.addEventListener('click', printAsPDF);
+    document.getElementById('downloadTXTBtn')?.addEventListener('click', downloadAsTXT);
+</script>
+</body>
+</html>
